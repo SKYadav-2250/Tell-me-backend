@@ -18,6 +18,7 @@ const normalizeEmail = (email = '') => email.trim().toLowerCase();
 // POST /api/auth/signup
 const signup = async (req, res) => {
   try {
+    
     const { name, email, password, about } = req.body;
     console.log(` ${name}  ${email}`)
     const normalizedEmail = normalizeEmail(email);
