@@ -27,6 +27,16 @@ const userSchema = new mongoose.Schema(
       maxlength: 200,
       default: 'Hey there! I am using TellMe.',
     },
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
+    otp: {
+      type: String,
+    },
+    otpExpires: {
+      type: Date,
+    },
   },
   { timestamps: true }
 );
