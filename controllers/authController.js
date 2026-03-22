@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const User = require('../models/User');
+const Otp = require('../models/Otp');
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
@@ -25,10 +26,11 @@ const isDatabaseReady = () => mongoose.connection.readyState === 1;
 const normalizeEmail = (email = '') => email.trim().toLowerCase();
 
 // POST /api/auth/signup
+// Just sends the OTP. Does not create the user account yet.
 const signup = async (req, res) => {
   try {
-    const { name, email, password, about } = req.body;
-    console.log(` ${name}  ${email}`);
+    const { name, email, password } = req.body;
+    console.log(`Signup Attempt: ${name}  ${email}`);
     const normalizedEmail = normalizeEmail(email);
 
     if (!name || !normalizedEmail || !password) {
@@ -39,28 +41,18 @@ const signup = async (req, res) => {
       return res.status(503).json({ message: 'Database connection is not ready. Please try again in a moment.' });
     }
 
-    const saltRounds = 12;
-    const passwordHash = await bcrypt.hash(password, saltRounds);
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-
-    let user = await User.findOne({ email: normalizedEmail });
-    
-    if (user) {
-      if (user.isVerified) {
+    const existingUser = await User.findOne({ email: normalizedEmail });
+    if (existingUser) {
         return res.status(409).json({ message: 'Email already in use' });
-      } else {
-        // User exists but unverified, update OTP and resend
-        user.name = name;
-        user.passwordHash = passwordHash;
-        user.about = about || user.about;
-        user.otp = otp;
-        user.otpExpires = otpExpires;
-        await user.save();
-      }
-    } else {
-      user = await User.create({ name, email: normalizedEmail, passwordHash, about, otp, otpExpires, isVerified: false });
     }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Delete any existing OTP for this email
+    await Otp.deleteMany({ email: normalizedEmail });
+    
+    // Create new OTP
+    await Otp.create({ email: normalizedEmail, otp });
 
     try {
       await transporter.sendMail({
@@ -71,11 +63,13 @@ const signup = async (req, res) => {
       });
     } catch (mailErr) {
       console.error('Email error:', mailErr);
-      return res.status(500).json({ message: 'Failed to send OTP email. Please ensure email credentials are correct.' });
+      return res.status(500).json({ 
+        message: 'Failed to send OTP email. Note: You must configure real EMAIL_USER and EMAIL_PASS (App Password) in the backend .env file.' 
+      });
     }
 
-    res.status(201).json({
-      message: 'OTP sent to email. Please verify.',
+    res.status(200).json({
+      message: 'OTP sent to email. Please verify to create your account.',
     });
   } catch (err) {
     console.error('Signup error:', err);
@@ -84,40 +78,42 @@ const signup = async (req, res) => {
 };
 
 // POST /api/auth/verify-otp
+// Verifies OTP and finally creates the user account
 const verifyOTP = async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    const { name, email, password, about, otp } = req.body;
     const normalizedEmail = normalizeEmail(email);
 
-    if (!normalizedEmail || !otp) {
-      return res.status(400).json({ message: 'Email and OTP are required' });
+    if (!normalizedEmail || !otp || !name || !password) {
+      return res.status(400).json({ message: 'Required fields are missing' });
     }
 
-    const user = await User.findOne({ email: normalizedEmail });
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+    const existingUser = await User.findOne({ email: normalizedEmail });
+    if (existingUser) {
+      return res.status(400).json({ message: 'User already exists' });
     }
 
-    if (user.isVerified) {
-      return res.status(400).json({ message: 'User already verified' });
+    const otpRecord = await Otp.findOne({ email: normalizedEmail, otp });
+    if (!otpRecord) {
+      return res.status(401).json({ message: 'Invalid or expired OTP' });
     }
 
-    if (user.otp !== otp) {
-      return res.status(401).json({ message: 'Invalid OTP' });
-    }
+    const saltRounds = 12;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
 
-    if (new Date() > user.otpExpires) {
-      return res.status(401).json({ message: 'OTP expired' });
-    }
+    const user = await User.create({ 
+        name, 
+        email: normalizedEmail, 
+        passwordHash, 
+        about 
+    });
 
-    user.isVerified = true;
-    user.otp = undefined;
-    user.otpExpires = undefined;
-    await user.save();
+    // Clean up OTP
+    await Otp.deleteMany({ email: normalizedEmail });
 
     const token = generateToken(user);
 
-    res.json({
+    res.status(201).json({
       message: 'Email verified and account created successfully',
       token,
       user: {
@@ -150,10 +146,6 @@ const login = async (req, res) => {
     const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       return res.status(401).json({ message: 'Invalid email or password' });
-    }
-
-    if (!user.isVerified) {
-      return res.status(403).json({ message: 'Email not verified. Please sign up to verify.' });
     }
 
     const isMatch = await bcrypt.compare(password, user.passwordHash);
