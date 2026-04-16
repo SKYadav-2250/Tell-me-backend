@@ -54,8 +54,8 @@ const io = new Server(server, {
 // Middleware
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -99,7 +99,7 @@ mongoose.connection.on('disconnected', () => {
 // Socket.IO
 initializeSocket(io);
 
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`TellMe server running on port ${PORT}`);
   console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
